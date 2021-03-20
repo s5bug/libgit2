@@ -635,6 +635,10 @@ extern int git_path_from_url_or_path(git_buf *local_path_out, const char *url_or
  * This will ensure that a git path does not contain any "unsafe" components,
  * a '.' or '..' component, or a component that is ".git" (in any case).
  *
+ * (Note: if you take or construct an on-disk path -- a workdir path,
+ * a path to a git repository or a reference name that could be a loose
+ * ref -- you should _also_ validate that with `git_path_validate_ondisk`.)
+ *
  * `repo` is optional.  If specified, it will be used to determine the short
  * path name to reject (if `GIT_PATH_REJECT_DOS_SHORTNAME` is specified),
  * in addition to the default of "git~1".
@@ -644,6 +648,25 @@ extern bool git_path_validate(
 	const char *path,
 	uint16_t mode,
 	unsigned int flags);
+
+/**
+ * Validate an absolute on-disk path.  This ensures that the given path is
+ * valid for the operating system/platform.  This should be checked by
+ * mechamisms like `git_checkout` after contructing on-disk paths and
+ * before trying to write them.
+ *
+ * This will ensure that an absolute path is smaller than MAX_PATH on
+ * Windows.
+ *
+ * `repo` is optional.  If specified, it will be used to determine whether
+ * long path support is enabled for the repository.
+ */
+extern int git_path_validate_ondisk(
+	git_repository *repo,
+	const char *path);
+extern int git_path_validate_ondisk_buf(
+	git_repository *repo,
+	git_buf *buf);
 
 /**
  * Convert any backslashes into slashes
