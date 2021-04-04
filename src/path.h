@@ -664,6 +664,10 @@ extern bool git_path_validate(
 extern int git_path_validate_ondisk(
 	git_repository *repo,
 	const char *path);
+extern int git_path_validate_ondisk_with_len(
+	git_repository *repo,
+	const char *path,
+	size_t len);
 extern int git_path_validate_ondisk_buf(
 	git_repository *repo,
 	git_buf *buf);

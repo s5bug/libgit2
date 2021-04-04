@@ -1904,7 +1904,10 @@ bool git_path_validate(
 	return verify_component(repo, start, (c - start), mode, flags);
 }
 
-int git_path_validate_ondisk_buf(git_repository *repo, git_buf *path)
+int git_path_validate_ondisk_with_len(
+	git_repository *repo,
+	const char *path,
+	size_t path_len)
 {
 #ifdef GIT_WIN32
 	int longpaths = 0;
@@ -1912,8 +1915,8 @@ int git_path_validate_ondisk_buf(git_repository *repo, git_buf *path)
 	if (repo && git_repository__configmap_lookup(&longpaths, repo, GIT_CONFIGMAP_LONGPATHS) < 0)
 		longpaths = 0;
 
-	if (!longpaths && git_utf8_char_length(path->ptr, path->size) > MAX_PATH) {
-		git_error_set(GIT_ERROR_REPOSITORY, "path too long: '%s'", git_buf_cstr(path));
+	if (!longpaths && git_utf8_char_length(path, path_len) > MAX_PATH) {
+		git_error_set(GIT_ERROR_REPOSITORY, "path too long: '%.*s'", (int)min(INT_MAX, path_len), path);
 		return -1;
 	}
 
@@ -1922,19 +1925,21 @@ int git_path_validate_ondisk_buf(git_repository *repo, git_buf *path)
 #else
 	GIT_UNUSED(repo);
 	GIT_UNUSED(path);
+	GIT_UNUSED(path_len);
 	return 0;
 #endif
 }
 
+int git_path_validate_ondisk_buf(
+	git_repository *repo,
+	git_buf *path)
+{
+	return git_path_validate_ondisk_with_len(repo, path->ptr, path->size);
+}
+
 int git_path_validate_ondisk(git_repository *repo, const char *path)
 {
-	git_buf buf = GIT_BUF_INIT;
-
-	buf.ptr = (char *)path;
-	buf.asize = 0;
-	buf.size = strlen(path);
-
-	return git_path_validate_ondisk_buf(repo, &buf);
+	return git_path_validate_ondisk_with_len(repo, path, strlen(path));
 }
 
 int git_path_normalize_slashes(git_buf *out, const char *path)
