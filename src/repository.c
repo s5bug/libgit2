@@ -2466,7 +2466,8 @@ int git_repository_item_path(git_buf *out, const git_repository *repo, git_repos
 		return -1;
 
 	if (items[item].name) {
-		if (git_buf_joinpath(out, parent, items[item].name) < 0)
+		if (git_buf_joinpath(out, parent, items[item].name) < 0 ||
+		    git_path_validate_ondisk_buf(NULL, out) < 0)
 			return -1;
 	}
 
@@ -2702,9 +2703,9 @@ int git_repository_hashfile(
 	 * now that is not possible because git_filters_load() needs it.
 	 */
 
-	error = git_path_join_unrooted(
-		&full_path, path, git_repository_workdir(repo), NULL);
-	if (error < 0)
+	if ((error = git_path_join_unrooted(
+		&full_path, path, git_repository_workdir(repo), NULL)) < 0 ||
+	    (error = git_path_validate_ondisk_buf(repo, &full_path)) < 0)
 		return error;
 
 	if (!as_path)
