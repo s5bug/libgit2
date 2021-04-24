@@ -68,6 +68,45 @@ typedef struct refdb_fs_backend {
 
 static int refdb_reflog_fs__delete(git_refdb_backend *_backend, const char *name);
 
+GIT_INLINE(int) loose_path(
+	git_buf *out,
+	const char *base,
+	const char *refname)
+{
+	int error;
+
+	if ((error = git_buf_joinpath(out, base, refname)) < 0)
+		return error;
+
+#ifdef GIT_WIN32
+
+	if (git_utf8_char_length(out->ptr, out->size) + CONST_STRLEN(".lock") > MAX_PATH) {
+		git_error_set(GIT_ERROR_REFERENCE, "path too long: '%.*s'", (int)min(INT_MAX, out->size), out->ptr);
+		return -1;
+	}
+
+#endif
+
+	return error;
+}
+
+GIT_INLINE(int) reflog_path(
+	git_buf *out,
+	git_repository *repo,
+	const char *refname)
+{
+	const char *base;
+	int error;
+
+	base = (strcmp(refname, GIT_HEAD_FILE) == 0) ? repo->gitdir :
+		repo->commondir;
+
+	if ((error = git_buf_joinpath(out, base, GIT_REFLOG_DIR)) < 0)
+		return error;
+
+	return loose_path(out, out->ptr, refname);
+}
+
 static int packref_cmp(const void *a_, const void *b_)
 {
 	const struct packref *a = a_, *b = b_;
@@ -223,9 +262,8 @@ static int loose_readbuffer(git_buf *buf, const char *base, const char *path)
 {
 	int error;
 
-	/* build full path to file */
-	if ((error = git_buf_joinpath(buf, base, path)) < 0 ||
-		(error = git_futils_readbuffer(buf, buf->ptr)) < 0)
+	if ((error = loose_path(buf, base, path)) < 0 ||
+	    (error = git_futils_readbuffer(buf, buf->ptr)) < 0)
 		git_buf_dispose(buf);
 
 	return error;
@@ -336,7 +374,7 @@ static int refdb_fs_backend__exists(
 
 	*exists = 0;
 
-	if ((error = git_buf_joinpath(&ref_path, backend->gitpath, ref_name)) < 0)
+	if ((error = loose_path(&ref_path, backend->gitpath, ref_name)) < 0)
 		goto out;
 
 	if (git_path_isfile(ref_path.ptr)) {
@@ -805,8 +843,8 @@ static int loose_lock(git_filebuf *file, refdb_fs_backend *backend, const char *
 	if ((error = git_futils_rmdir_r(name, basedir, GIT_RMDIR_SKIP_NONEMPTY)) < 0)
 		return error;
 
-	if (git_buf_joinpath(&ref_path, basedir, name) < 0)
-		return -1;
+	if ((error = loose_path(&ref_path, basedir, name)) < 0)
+		return error;
 
 	filebuf_flags = GIT_FILEBUF_CREATE_LEADING_DIRS;
 	if (backend->fsync)
@@ -1329,6 +1367,9 @@ static int refdb_fs_backend__prune_refs(
 				backend->commonpath,
 				git_buf_cstr(&relative_path));
 
+		if (!error)
+			error = git_path_validate_ondisk_buf(NULL, &base_path);
+
 		if (error < 0)
 			goto cleanup;
 
@@ -1371,19 +1412,19 @@ static int refdb_fs_backend__delete(
 
 static int loose_delete(refdb_fs_backend *backend, const char *ref_name)
 {
-	git_buf loose_path = GIT_BUF_INIT;
+	git_buf path = GIT_BUF_INIT;
 	int error = 0;
 
-	if (git_buf_joinpath(&loose_path, backend->commonpath, ref_name) < 0)
-		return -1;
+	if ((error = loose_path(&path, backend->commonpath, ref_name)) < 0)
+		return error;
 
-	error = p_unlink(loose_path.ptr);
+	error = p_unlink(path.ptr);
 	if (error < 0 && errno == ENOENT)
 		error = GIT_ENOTFOUND;
 	else if (error != 0)
 		error = -1;
 
-	git_buf_dispose(&loose_path);
+	git_buf_dispose(&path);
 
 	return error;
 }
@@ -1677,13 +1718,6 @@ static int create_new_reflog_file(const char *filepath)
 	return p_close(fd);
 }
 
-GIT_INLINE(int) retrieve_reflog_path(git_buf *path, git_repository *repo, const char *name)
-{
-	if (strcmp(name, GIT_HEAD_FILE) == 0)
-		return git_buf_join3(path, '/', repo->gitdir, GIT_REFLOG_DIR, name);
-	return git_buf_join3(path, '/', repo->commondir, GIT_REFLOG_DIR, name);
-}
-
 static int refdb_reflog_fs__ensure_log(git_refdb_backend *_backend, const char *name)
 {
 	refdb_fs_backend *backend;
@@ -1696,7 +1730,7 @@ static int refdb_reflog_fs__ensure_log(git_refdb_backend *_backend, const char *
 	backend = GIT_CONTAINER_OF(_backend, refdb_fs_backend, parent);
 	repo = backend->repo;
 
-	if ((error = retrieve_reflog_path(&path, repo, name)) < 0)
+	if ((error = reflog_path(&path, repo, name)) < 0)
 		return error;
 
 	error = create_new_reflog_file(git_buf_cstr(&path));
@@ -1710,7 +1744,7 @@ static int has_reflog(git_repository *repo, const char *name)
 	int ret = 0;
 	git_buf path = GIT_BUF_INIT;
 
-	if (retrieve_reflog_path(&path, repo, name) < 0)
+	if (reflog_path(&path, repo, name) < 0)
 		goto cleanup;
 
 	ret = git_path_isfile(git_buf_cstr(&path));
@@ -1751,7 +1785,7 @@ static int refdb_reflog_fs__read(git_reflog **out, git_refdb_backend *_backend, 
 	if (reflog_alloc(&log, name) < 0)
 		return -1;
 
-	if (retrieve_reflog_path(&log_path, repo, name) < 0)
+	if (reflog_path(&log_path, repo, name) < 0)
 		goto cleanup;
 
 	error = git_futils_readbuffer(&log_file, git_buf_cstr(&log_path));
@@ -1833,7 +1867,7 @@ static int lock_reflog(git_filebuf *file, refdb_fs_backend *backend, const char 
 		return GIT_EINVALIDSPEC;
 	}
 
-	if (retrieve_reflog_path(&log_path, repo, refname) < 0)
+	if (reflog_path(&log_path, repo, refname) < 0)
 		return -1;
 
 	if (!git_path_isfile(git_buf_cstr(&log_path))) {
@@ -1934,7 +1968,7 @@ static int reflog_append(refdb_fs_backend *backend, const git_reference *ref, co
 	if ((error = serialize_reflog_entry(&buf, &old_id, &new_id, who, message)) < 0)
 		goto cleanup;
 
-	if ((error = retrieve_reflog_path(&path, repo, ref->name)) < 0)
+	if ((error = reflog_path(&path, repo, ref->name)) < 0)
 		goto cleanup;
 
 	if (((error = git_futils_mkpath2file(git_buf_cstr(&path), 0777)) < 0) &&
@@ -1997,11 +2031,11 @@ static int refdb_reflog_fs__rename(git_refdb_backend *_backend, const char *old_
 	if (git_buf_joinpath(&temp_path, repo->gitdir, GIT_REFLOG_DIR) < 0)
 		return -1;
 
-	if (git_buf_joinpath(&old_path, git_buf_cstr(&temp_path), old_name) < 0)
-		return -1;
+	if ((error = loose_path(&old_path, git_buf_cstr(&temp_path), old_name)) < 0)
+		return error;
 
-	if (git_buf_joinpath(&new_path, git_buf_cstr(&temp_path), git_buf_cstr(&normalized)) < 0)
-		return -1;
+	if ((error = loose_path(&new_path, git_buf_cstr(&temp_path), git_buf_cstr(&normalized))) < 0)
+		return error;
 
 	if (!git_path_exists(git_buf_cstr(&old_path))) {
 		error = GIT_ENOTFOUND;
@@ -2015,8 +2049,8 @@ static int refdb_reflog_fs__rename(git_refdb_backend *_backend, const char *old_
 	 *  - a/b -> a/b/c
 	 *  - a/b/c/d -> a/b/c
 	 */
-	if (git_buf_joinpath(&temp_path, git_buf_cstr(&temp_path), "temp_reflog") < 0)
-		return -1;
+	if ((error = loose_path(&temp_path, git_buf_cstr(&temp_path), "temp_reflog")) < 0)
+		return error;
 
 	if ((fd = git_futils_mktmp(&temp_path, git_buf_cstr(&temp_path), GIT_REFLOG_FILE_MODE)) < 0) {
 		error = -1;
@@ -2065,7 +2099,7 @@ static int refdb_reflog_fs__delete(git_refdb_backend *_backend, const char *name
 	GIT_ASSERT_ARG(_backend);
 	GIT_ASSERT_ARG(name);
 
-	if ((error = retrieve_reflog_path(&path, backend->repo, name)) < 0)
+	if ((error = reflog_path(&path, backend->repo, name)) < 0)
 		goto out;
 
 	if (!git_path_exists(path.ptr))
