@@ -67,13 +67,15 @@ GIT_INLINE(int) p_fsync(int fd)
 #define p_ftruncate(fd, sz) ftruncate(fd, sz)
 
 /*
+ * Some systems do not support file permissions. For example,
  * Pre-Android 5 did not implement a virtual filesystem atop FAT
  * partitions for Unix permissions, which causes chmod to fail. However,
  * Unix permissions have no effect on Android anyway as file permissions
  * are not actually managed this way, so treating it as a no-op across
- * all Android is safe.
+ * all Android is safe. The 3DS does not at all support file permissions,
+ * and a no-op is safe here as well.
  */
-#ifdef __ANDROID__
+#ifdef NO_CHMOD
 # define p_chmod(p,m) 0
 #else
 # define p_chmod(p,m) chmod(p, m)
