@@ -23,26 +23,41 @@
 
 static int dos_drive_prefix_length(const char *path)
 {
-	int i;
+#ifdef GIT_WIN32
+	const char pathSep = '\\';
+#else
+	const char pathSep = '/';
+#endif
 
-	/*
-	 * Does it start with an ASCII letter (i.e. highest bit not set),
-	 * followed by a colon?
-	 */
-	if (!(0x80 & (unsigned char)*path))
-		return *path && path[1] == ':' ? 2 : 0;
+	// Find the location of the first colon.
+	const char* colonPtr = strchr(path, ':');
 
-	/*
-	 * While drive letters must be letters of the English alphabet, it is
-	 * possible to assign virtually _any_ Unicode character via `subst` as
-	 * a drive letter to "virtual drives". Even `1`, or `ä`. Or fun stuff
-	 * like this:
-	 *
-	 *	subst ֍: %USERPROFILE%\Desktop
-	 */
-	for (i = 1; i < 4 && (0x80 & (unsigned char)path[i]); i++)
-		; /* skip first UTF-8 character */
-	return path[i] == ':' ? i + 1 : 0;
+	if(colonPtr == NULL) {
+		// If a colon was not found, there's definitely no drive prefix.
+		return 0;
+	} else {
+		// Otherwise, there might be, if the first path separator is
+		// directly after the colon.
+		const char* pathSepPtr = strchr(path, pathSep);
+
+		if(pathSepPtr == NULL) {
+			// There was no path separator, so if the colon is at the end
+			// of the string, that is our drive name.
+			if(strlen(colonPtr) == 1) {
+				return (colonPtr - path) + 1;
+			} else {
+				return 0;
+			}
+		} else {
+			// If the path separator is directly after the colon, return
+			// the length of the drive name.
+			if(pathSepPtr - colonPtr == 1) {
+				return (colonPtr - path) + 1;
+			} else {
+				return 0;
+			}
+		}
+	}
 }
 
 #ifdef GIT_WIN32
